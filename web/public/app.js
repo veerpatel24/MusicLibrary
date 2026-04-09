@@ -58,6 +58,31 @@ function bind(id, ev, fn) {
   document.getElementById(id)?.addEventListener(ev, fn);
 }
 
+async function refreshIntegrationHints() {
+  const box = document.getElementById("integration-alerts");
+  const baseEl = document.getElementById("cb-base");
+  if (!box || !baseEl) return;
+  try {
+    const c = await api("/api/integrations/config");
+    baseEl.textContent = `${c.publicOrigin}/callback/{spotify|youtube|soundcloud}`;
+    const msgs = [];
+    if (!c.spotifyConfigured) {
+      msgs.push("Spotify: add SPOTIFY_CLIENT_ID to .env (see env.example), or start Java with -Dspotify.client.id=…");
+    }
+    if (!c.youtubeConfigured) {
+      msgs.push("YouTube: add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (YouTube Data API OAuth client).");
+    }
+    if (!c.soundcloudConfigured) {
+      msgs.push("SoundCloud: add SOUNDCLOUD_CLIENT_ID and SOUNDCLOUD_CLIENT_SECRET.");
+    }
+    box.innerHTML = msgs.length
+      ? msgs.map((m) => `<p class="alert">${esc(m)}</p>`).join("")
+      : '<p class="alert ok">API credentials look set. If connect still fails, add every redirect URL variant (localhost and 127.0.0.1) in the provider dashboard.</p>';
+  } catch (e) {
+    box.innerHTML = `<p class="alert">${esc(e.message)}</p>`;
+  }
+}
+
 document.querySelectorAll(".tab").forEach((b) => {
   b.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
@@ -65,6 +90,7 @@ document.querySelectorAll(".tab").forEach((b) => {
     const on = b.dataset.tab === "lib";
     document.getElementById("tab-lib").classList.toggle("hidden", !on);
     document.getElementById("tab-stream").classList.toggle("hidden", on);
+    if (!on) refreshIntegrationHints();
   });
 });
 
@@ -245,9 +271,10 @@ document.querySelectorAll(".connect-card").forEach((card) => {
   card.querySelector(".btn-connect")?.addEventListener("click", async () => {
     try {
       const { url } = await api(`/api/integrations/${svc}/begin`);
-      window.location.href = url;
+      window.location.assign(url);
     } catch (e) {
       toast(e.message);
+      refreshIntegrationHints();
     }
   });
 
@@ -299,8 +326,6 @@ if (params.get("connect") === "ok") {
   toast(`Connect failed: ${params.get("reason") || "?"}`);
   history.replaceState({}, "", location.pathname);
 }
-
-document.getElementById("cb-base").textContent = `${location.origin}/callback/{spotify|youtube|soundcloud}`;
 
 integrationStatus()
   .then(setStreamStatus)

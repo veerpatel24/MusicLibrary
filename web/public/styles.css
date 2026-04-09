@@ -259,3 +259,29 @@ details.section .inner {
 .toast.show {
   opacity: 1;
 }
+
+.integration-alerts {
+  margin-bottom: 0.75rem;
+}
+
+.integration-alerts .alert {
+  margin: 0 0 0.5rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--danger);
+  background: #2a1a1d;
+  color: #ffc9ce;
+  font-size: 0.86rem;
+}
+
+.integration-alerts .alert.ok {
+  border-color: #3d5c40;
+  background: #1a2a1c;
+  color: #b8e6bc;
+}
+
+.mono {
+  font-family: ui-monospace, monospace;
+  font-size: 0.82rem;
+  word-break: break-all;
+}

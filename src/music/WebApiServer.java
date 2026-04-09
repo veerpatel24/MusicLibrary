@@ -41,7 +41,7 @@ public final class WebApiServer {
     private final StreamingIntegrations streaming;
     private final ConcurrentHashMap<String, PendingOAuth> oauthPending = new ConcurrentHashMap<>();
 
-    private String publicOrigin = "http://localhost:7070";
+    private int listenPort = 7070;
 
     private WebApiServer(Path dataRoot) {
         this.dataRoot = dataRoot.toAbsolutePath().normalize();
@@ -56,21 +56,66 @@ public final class WebApiServer {
     }
 
     private void start(int port) throws IOException {
-        String po = env("MUSIC_PUBLIC_ORIGIN");
-        this.publicOrigin = (po != null ? po.replaceAll("/+$", "") : "http://localhost:" + port);
+        this.listenPort = port;
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/api/", this::handleApi);
         server.createContext("/callback/", this::handleOAuthCallback);
         server.createContext("/", this::handleStatic);
         server.setExecutor(null);
         server.start();
-        System.out.println("Music Library UI: " + publicOrigin + "/");
+        String po = env("MUSIC_PUBLIC_ORIGIN");
+        String hint = po != null ? po.replaceAll("/+$", "") : "http://127.0.0.1:" + port;
+        System.out.println("Music Library UI: " + hint + "/  (OAuth redirect URIs must use the same host you open in the browser, or set MUSIC_PUBLIC_ORIGIN)");
         System.out.println("Data root: " + dataRoot);
+    }
+
+    /**
+     * OAuth redirect_uri must match the authorize request exactly. Prefer deriving from the incoming Host
+     * so http://127.0.0.1:7070 and http://localhost:7070 both work when registered with the provider.
+     */
+    private String resolvePublicOrigin(HttpExchange ex) {
+        String po = env("MUSIC_PUBLIC_ORIGIN");
+        if (po != null) {
+            return po.replaceAll("/+$", "");
+        }
+        String host = ex.getRequestHeaders().getFirst("Host");
+        if (host == null || host.isBlank()) {
+            return "http://127.0.0.1:" + listenPort;
+        }
+        host = host.trim();
+        String xf = ex.getRequestHeaders().getFirst("X-Forwarded-Proto");
+        String scheme = "https".equalsIgnoreCase(xf) ? "https" : "http";
+        if (!host.contains(":") && listenPort != 80 && listenPort != 443) {
+            host = host + ":" + listenPort;
+        }
+        return scheme + "://" + host;
     }
 
     private static String env(String key) {
         String v = System.getenv(key);
-        return v != null && !v.isBlank() ? v.trim() : null;
+        if (v == null || v.isBlank()) {
+            return null;
+        }
+        v = v.trim();
+        if ((v.startsWith("\"") && v.endsWith("\"")) || (v.startsWith("'") && v.endsWith("'"))) {
+            v = v.substring(1, v.length() - 1).trim();
+        }
+        return v.isBlank() ? null : v;
+    }
+
+    /** Env first, then {@code -D} system property (e.g. {@code -Dspotify.client.id=...}). */
+    private static String cfg(String envKey, String systemPropertyKey) {
+        String v = env(envKey);
+        if (v != null) {
+            return v;
+        }
+        if (systemPropertyKey != null) {
+            v = System.getProperty(systemPropertyKey);
+            if (v != null && !v.isBlank()) {
+                return v.trim();
+            }
+        }
+        return null;
     }
 
     private void handleOAuthCallback(HttpExchange ex) throws IOException {
@@ -82,45 +127,45 @@ public final class WebApiServer {
         }
         try {
             URI uri = ex.getRequestURI();
-            String path = uri.getPath();
             String q = uri.getRawQuery() == null ? "" : uri.getRawQuery();
             Map<String, String> qp = parseQuery(q);
             String code = qp.get("code");
             String state = qp.get("state");
             String err = qp.get("error");
+            String origin = resolvePublicOrigin(ex);
             if (err != null) {
-                redirectBrowser(ex, publicOrigin + "/?connect=error&reason=" + urlEnc(err));
+                redirectBrowser(ex, origin + "/?connect=error&reason=" + urlEnc(err));
                 return;
             }
             if (code == null || state == null) {
-                redirectBrowser(ex, publicOrigin + "/?connect=error&reason=missing_params");
+                redirectBrowser(ex, origin + "/?connect=error&reason=missing_params");
                 return;
             }
             PendingOAuth p = oauthPending.remove(state);
             if (p == null || System.currentTimeMillis() > p.expiresAt) {
-                redirectBrowser(ex, publicOrigin + "/?connect=error&reason=bad_state");
+                redirectBrowser(ex, origin + "/?connect=error&reason=bad_state");
                 return;
             }
-            String redir = publicOrigin + "/callback/" + p.provider;
+            String redir = origin + "/callback/" + p.provider;
             switch (p.provider) {
                 case "spotify" -> {
-                    String cid = env("SPOTIFY_CLIENT_ID");
+                    String cid = cfg("SPOTIFY_CLIENT_ID", "spotify.client.id");
                     if (cid == null) {
                         throw new IllegalStateException("SPOTIFY_CLIENT_ID not set");
                     }
                     streaming.spotifyFinishCode(cid, code, redir, p.verifier);
                 }
                 case "youtube" -> {
-                    String cid = env("GOOGLE_CLIENT_ID");
-                    String sec = env("GOOGLE_CLIENT_SECRET");
+                    String cid = cfg("GOOGLE_CLIENT_ID", "google.client.id");
+                    String sec = cfg("GOOGLE_CLIENT_SECRET", "google.client.secret");
                     if (cid == null || sec == null) {
                         throw new IllegalStateException("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set");
                     }
                     streaming.youtubeFinishCode(cid, sec, code, redir);
                 }
                 case "soundcloud" -> {
-                    String cid = env("SOUNDCLOUD_CLIENT_ID");
-                    String sec = env("SOUNDCLOUD_CLIENT_SECRET");
+                    String cid = cfg("SOUNDCLOUD_CLIENT_ID", "soundcloud.client.id");
+                    String sec = cfg("SOUNDCLOUD_CLIENT_SECRET", "soundcloud.client.secret");
                     if (cid == null || sec == null) {
                         throw new IllegalStateException("SOUNDCLOUD_CLIENT_ID / SOUNDCLOUD_CLIENT_SECRET not set");
                     }
@@ -128,10 +173,13 @@ public final class WebApiServer {
                 }
                 default -> throw new IllegalStateException("unknown provider");
             }
-            redirectBrowser(ex, publicOrigin + "/?connect=ok&provider=" + urlEnc(p.provider));
+            redirectBrowser(ex, origin + "/?connect=ok&provider=" + urlEnc(p.provider));
         } catch (Exception e) {
             String m = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-            redirectBrowser(ex, publicOrigin + "/?connect=error&reason=" + urlEnc(m));
+            System.err.println("[oauth callback] " + m);
+            e.printStackTrace(System.err);
+            String origin = resolvePublicOrigin(ex);
+            redirectBrowser(ex, origin + "/?connect=error&reason=" + urlEnc(m));
         }
     }
 
@@ -195,8 +243,21 @@ public final class WebApiServer {
     private static final Pattern P_SHUF = Pattern.compile("^/api/playlist/(\\d+)/shuffle$");
 
     private boolean dispatchApi(HttpExchange ex, String method, String path) throws IOException, InterruptedException {
+        String origin = resolvePublicOrigin(ex);
         if ("/api/health".equals(path) && "GET".equals(method)) {
             sendJson(ex, 200, Map.of("ok", true));
+            return true;
+        }
+        if ("/api/integrations/config".equals(path) && "GET".equals(method)) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("publicOrigin", origin);
+            m.put("spotifyConfigured", cfg("SPOTIFY_CLIENT_ID", "spotify.client.id") != null);
+            m.put("youtubeConfigured", cfg("GOOGLE_CLIENT_ID", "google.client.id") != null
+                    && cfg("GOOGLE_CLIENT_SECRET", "google.client.secret") != null);
+            m.put("soundcloudConfigured", cfg("SOUNDCLOUD_CLIENT_ID", "soundcloud.client.id") != null
+                    && cfg("SOUNDCLOUD_CLIENT_SECRET", "soundcloud.client.secret") != null);
+            m.put("usingEnvOverride", env("MUSIC_PUBLIC_ORIGIN") != null);
+            sendJson(ex, 200, m);
             return true;
         }
         if ("/api/integrations/status".equals(path) && "GET".equals(method)) {
@@ -204,42 +265,50 @@ public final class WebApiServer {
             return true;
         }
         if ("/api/integrations/spotify/begin".equals(path) && "GET".equals(method)) {
-            String cid = env("SPOTIFY_CLIENT_ID");
+            String cid = cfg("SPOTIFY_CLIENT_ID", "spotify.client.id");
             if (cid == null) {
-                sendJson(ex, 400, Map.of("error", "Set SPOTIFY_CLIENT_ID and register redirect " + publicOrigin + "/callback/spotify"));
+                sendJson(ex, 400, Map.of("error",
+                        "Set SPOTIFY_CLIENT_ID in .env or -Dspotify.client.id=… Register redirect URI exactly: "
+                                + origin + "/callback/spotify"));
                 return true;
             }
             String state = StreamingIntegrations.randomUrlSafe(16);
             String verifier = StreamingIntegrations.randomUrlSafe(48);
             String challenge = StreamingIntegrations.pkceChallengeS256(verifier);
             oauthPending.put(state, new PendingOAuth("spotify", verifier, System.currentTimeMillis() + OAUTH_TTL_MS));
-            String url = streaming.spotifyAuthorizeUrl(cid, publicOrigin + "/callback/spotify", state, challenge);
+            String url = streaming.spotifyAuthorizeUrl(cid, origin + "/callback/spotify", state, challenge);
             sendJson(ex, 200, Map.of("url", url));
             return true;
         }
         if ("/api/integrations/youtube/begin".equals(path) && "GET".equals(method)) {
-            String cid = env("GOOGLE_CLIENT_ID");
-            if (cid == null) {
-                sendJson(ex, 400, Map.of("error", "Set GOOGLE_CLIENT_ID (YouTube Data API OAuth client)"));
+            String cid = cfg("GOOGLE_CLIENT_ID", "google.client.id");
+            String gsec = cfg("GOOGLE_CLIENT_SECRET", "google.client.secret");
+            if (cid == null || gsec == null) {
+                sendJson(ex, 400, Map.of("error",
+                        "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env (or -Dgoogle.client.id / -Dgoogle.client.secret). Redirect: "
+                                + origin + "/callback/youtube"));
                 return true;
             }
             String state = StreamingIntegrations.randomUrlSafe(16);
             oauthPending.put(state, new PendingOAuth("youtube", null, System.currentTimeMillis() + OAUTH_TTL_MS));
-            String url = streaming.youtubeAuthorizeUrl(cid, publicOrigin + "/callback/youtube", state);
+            String url = streaming.youtubeAuthorizeUrl(cid, origin + "/callback/youtube", state);
             sendJson(ex, 200, Map.of("url", url));
             return true;
         }
         if ("/api/integrations/soundcloud/begin".equals(path) && "GET".equals(method)) {
-            String cid = env("SOUNDCLOUD_CLIENT_ID");
-            if (cid == null) {
-                sendJson(ex, 400, Map.of("error", "Set SOUNDCLOUD_CLIENT_ID"));
+            String cid = cfg("SOUNDCLOUD_CLIENT_ID", "soundcloud.client.id");
+            String scsec = cfg("SOUNDCLOUD_CLIENT_SECRET", "soundcloud.client.secret");
+            if (cid == null || scsec == null) {
+                sendJson(ex, 400, Map.of("error",
+                        "Set SOUNDCLOUD_CLIENT_ID and SOUNDCLOUD_CLIENT_SECRET. Redirect: "
+                                + origin + "/callback/soundcloud"));
                 return true;
             }
             String state = StreamingIntegrations.randomUrlSafe(16);
             String verifier = StreamingIntegrations.randomUrlSafe(48);
             String challenge = StreamingIntegrations.pkceChallengeS256(verifier);
             oauthPending.put(state, new PendingOAuth("soundcloud", verifier, System.currentTimeMillis() + OAUTH_TTL_MS));
-            String url = streaming.soundcloudAuthorizeUrl(cid, publicOrigin + "/callback/soundcloud", state, challenge);
+            String url = streaming.soundcloudAuthorizeUrl(cid, origin + "/callback/soundcloud", state, challenge);
             sendJson(ex, 200, Map.of("url", url));
             return true;
         }
@@ -259,7 +328,7 @@ public final class WebApiServer {
             return true;
         }
         if ("/api/integrations/spotify/playlists".equals(path) && "GET".equals(method)) {
-            String cid = env("SPOTIFY_CLIENT_ID");
+            String cid = cfg("SPOTIFY_CLIENT_ID", "spotify.client.id");
             if (cid == null) {
                 sendJson(ex, 400, Map.of("error", "SPOTIFY_CLIENT_ID not set"));
                 return true;
@@ -268,8 +337,8 @@ public final class WebApiServer {
             return true;
         }
         if ("/api/integrations/youtube/playlists".equals(path) && "GET".equals(method)) {
-            String cid = env("GOOGLE_CLIENT_ID");
-            String sec = env("GOOGLE_CLIENT_SECRET");
+            String cid = cfg("GOOGLE_CLIENT_ID", "google.client.id");
+            String sec = cfg("GOOGLE_CLIENT_SECRET", "google.client.secret");
             if (cid == null || sec == null) {
                 sendJson(ex, 400, Map.of("error", "Google OAuth env not set"));
                 return true;
@@ -285,7 +354,7 @@ public final class WebApiServer {
             JsonObject o = JsonParser.parseString(readBody(ex)).getAsJsonObject();
             String pid = o.get("playlistId").getAsString();
             int index = o.get("index").getAsInt();
-            String cid = env("SPOTIFY_CLIENT_ID");
+            String cid = cfg("SPOTIFY_CLIENT_ID", "spotify.client.id");
             if (cid == null) {
                 sendJson(ex, 400, Map.of("error", "SPOTIFY_CLIENT_ID not set"));
                 return true;
@@ -302,8 +371,8 @@ public final class WebApiServer {
             JsonObject o = JsonParser.parseString(readBody(ex)).getAsJsonObject();
             String pid = o.get("playlistId").getAsString();
             int index = o.get("index").getAsInt();
-            String cid = env("GOOGLE_CLIENT_ID");
-            String sec = env("GOOGLE_CLIENT_SECRET");
+            String cid = cfg("GOOGLE_CLIENT_ID", "google.client.id");
+            String sec = cfg("GOOGLE_CLIENT_SECRET", "google.client.secret");
             if (cid == null || sec == null) {
                 sendJson(ex, 400, Map.of("error", "Google OAuth env not set"));
                 return true;

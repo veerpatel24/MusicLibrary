@@ -49,6 +49,14 @@ java -cp "out:lib/cs112.jar" music.Driver
 - **SoundCloud** API access depends on your app’s approval tier; errors in the list/import panel usually mean the token or API permissions need to be fixed in the SoundCloud developer dashboard.
 - OAuth tokens are stored only on your machine in **`.integration-tokens.json`** at the project root (gitignored). Do not share that file.
 
+### Connect button does nothing or “bad_state”
+
+1. Open the **Streaming** tab: red boxes list missing env vars. Create **`.env`** from **`env.example`** and restart `./scripts/run-web.sh`.
+2. **`localhost` vs `127.0.0.1`**: The app now builds the OAuth redirect from your browser’s **Host** header. In Spotify / Google / SoundCloud consoles, register redirect URLs for **both** `http://localhost:7070/callback/...` and `http://127.0.0.1:7070/callback/...` if you switch between them.
+3. **`bad_state`**: The server forgot the login attempt (usually **restarted Java** between clicking Connect and approving in the browser). Click Connect again without restarting the server.
+4. **Token exchange errors**: Check the **terminal** where `run-web.sh` is running; OAuth failures are printed to stderr. You can also pass client IDs without `.env`:  
+   `java -Dspotify.client.id=… -cp … music.WebApiServer` (see `env.example` for variable names).
+
 ## Project layout
 
 | Path | Role |
