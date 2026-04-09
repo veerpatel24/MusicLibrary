@@ -295,7 +295,75 @@ public class MusicLibrary {
      * @param playlistIndex2 the second playlist to merge into one playlist
      */
     public void combinePlaylists(int playlistIndex1, int playlistIndex2) {
-
+        // write code here
+        int lowpIndex = Math.min(playlistIndex1, playlistIndex2);
+        int highpIndex = Math.max(playlistIndex1, playlistIndex2);
+        Playlist lowp = allPlaylists.get(lowpIndex);
+        Playlist highp = allPlaylists.get(highpIndex);
+        LLNode<Song> combend = null;
+        int combsize = 0;
+      while(lowp.getLast()!=null && highp.getLast()!=null){
+        LLNode<Song> lowpfront = lowp.getLast().getNext();
+        LLNode<Song> highpfront = highp.getLast().getNext();
+        LLNode<Song> chosen;
+        if(lowpfront.getData().getPopularity() > highpfront.getData().getPopularity()){
+            chosen = lowpfront;
+            if(lowp.getSize()==1){
+                lowp.setLast(null);
+            }
+            else{
+                lowp.getLast().setNext(lowpfront.getNext());
+            }
+            lowp.setSize(lowp.getSize()-1);
+        }
+        else if (highpfront.getData().getPopularity() > lowpfront.getData().getPopularity()) {
+            chosen = highpfront;
+            if(highp.getSize()==1){
+                highp.setLast(null);
+            }
+            else{
+                highp.getLast().setNext(highpfront.getNext());
+            }
+            highp.setSize(highp.getSize()-1);
+        }
+        else {
+            // Equal popularity: take from the playlist with the smaller index first.
+            chosen = lowpfront;
+            if(lowp.getSize()==1){
+                lowp.setLast(null);
+            }
+            else{
+                lowp.getLast().setNext(lowpfront.getNext());
+            }
+            lowp.setSize(lowp.getSize()-1);
+        }
+        if(combend==null){
+            combend = chosen;
+            combend.setNext(combend);
+        }
+        else{
+            chosen.setNext(combend.getNext());
+            combend.setNext(chosen);
+            combend = chosen;
+        }
+        combsize++;
+      }
+      Playlist remains = (lowp.getLast()!=null) ? lowp : highp;
+      if(remains.getLast()!=null){
+        if(combend==null){
+            combend = remains.getLast();
+        }
+        else{
+            LLNode<Song> combfront = combend.getNext();
+            LLNode<Song> remainfront = remains.getLast().getNext();
+            combend.setNext(remainfront);
+            remains.getLast().setNext(combfront);
+            combend = remains.getLast();
+        }
+        combsize += remains.getSize();
+      }
+      allPlaylists.set(lowpIndex, new Playlist(combend, combsize));
+      removePlaylist(highpIndex);
     }
 
     /**
@@ -306,7 +374,44 @@ public class MusicLibrary {
      * @param playlistIndex the playlist to shuffle in songLibrary
      */
     public void shufflePlaylist(int playlistIndex) {
-
+        // write code here
+        Playlist playlist = allPlaylists.get(playlistIndex);
+        if(playlist.getLast()==null){
+            return;
+        }
+        LLNode<Song> newend = null;
+        int newsize = 0;
+        while(playlist.getSize()>0){
+            int pos = StdRandom.uniformInt(1, playlist.getSize()+1);
+            int size = playlist.getSize();
+            LLNode<Song> previous = playlist.getLast();
+            for (int i=1; i<pos; i++){
+                previous = previous.getNext();
+            }
+            LLNode<Song> chosen = previous.getNext();
+            if(size==1){
+                playlist.setLast(null);
+            }
+            else{
+                previous.setNext(chosen.getNext());
+                if(chosen==playlist.getLast()){
+                    playlist.setLast(previous);
+                }
+            }
+            playlist.setSize(size-1);
+            if(newend==null){
+                newend = chosen;
+                newend.setNext(newend);
+            }
+            else{
+                chosen.setNext(newend.getNext());
+                newend.setNext(chosen);
+                newend = chosen;
+            }
+            newsize++;
+        }
+        playlist.setLast(newend);
+        playlist.setSize(newsize);
     }
     /**
      * ****DO NOT**** UPDATE THIS METHOD
