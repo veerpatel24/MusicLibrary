@@ -2,3 +2,5 @@ target/
 *.class
 web/uploads/*
 !web/uploads/.gitkeep
+.integration-tokens.json
+.env

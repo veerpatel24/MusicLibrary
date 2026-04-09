@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# Run the Music Library web UI + API. MVP terminal flow is unchanged (use Driver).
+# Run the Music Library web UI + API. Terminal flow: use music.Driver.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+if [[ -f .env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
 mkdir -p target/classes web/uploads
 export JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 17 2>/dev/null || /usr/libexec/java_home)}"
 CP="lib/cs112.jar:lib-web/gson-2.10.1.jar:target/classes"

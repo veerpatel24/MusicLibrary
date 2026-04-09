@@ -9,11 +9,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,20 +27,26 @@ import com.sun.net.httpserver.HttpServer;
 import edu.rutgers.cs112.node.LLNode;
 
 /**
- * HTTP API and static UI for {@link MusicLibrary}. Mirrors actions from {@link Driver}.
+ * HTTP API and static UI for {@link MusicLibrary}. Mirrors {@link Driver}; optional Spotify / YouTube / SoundCloud import.
  */
 public final class WebApiServer {
 
     private static final int SHUFFLE_SEED = 2026;
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
+    private static final long OAUTH_TTL_MS = 900_000L;
 
     private final MusicLibrary library = new MusicLibrary();
     private final Path dataRoot;
     private final Path publicRoot;
+    private final StreamingIntegrations streaming;
+    private final ConcurrentHashMap<String, PendingOAuth> oauthPending = new ConcurrentHashMap<>();
+
+    private String publicOrigin = "http://localhost:7070";
 
     private WebApiServer(Path dataRoot) {
         this.dataRoot = dataRoot.toAbsolutePath().normalize();
         this.publicRoot = this.dataRoot.resolve("web/public").normalize();
+        this.streaming = new StreamingIntegrations(this.dataRoot);
     }
 
     public static void main(String[] args) throws IOException {
@@ -50,13 +56,109 @@ public final class WebApiServer {
     }
 
     private void start(int port) throws IOException {
+        String po = env("MUSIC_PUBLIC_ORIGIN");
+        this.publicOrigin = (po != null ? po.replaceAll("/+$", "") : "http://localhost:" + port);
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/api/", this::handleApi);
+        server.createContext("/callback/", this::handleOAuthCallback);
         server.createContext("/", this::handleStatic);
         server.setExecutor(null);
         server.start();
-        System.out.println("Music Library UI: http://localhost:" + port + "/");
+        System.out.println("Music Library UI: " + publicOrigin + "/");
         System.out.println("Data root: " + dataRoot);
+    }
+
+    private static String env(String key) {
+        String v = System.getenv(key);
+        return v != null && !v.isBlank() ? v.trim() : null;
+    }
+
+    private void handleOAuthCallback(HttpExchange ex) throws IOException {
+        addCors(ex);
+        if (!"GET".equalsIgnoreCase(ex.getRequestMethod())) {
+            ex.sendResponseHeaders(405, -1);
+            ex.close();
+            return;
+        }
+        try {
+            URI uri = ex.getRequestURI();
+            String path = uri.getPath();
+            String q = uri.getRawQuery() == null ? "" : uri.getRawQuery();
+            Map<String, String> qp = parseQuery(q);
+            String code = qp.get("code");
+            String state = qp.get("state");
+            String err = qp.get("error");
+            if (err != null) {
+                redirectBrowser(ex, publicOrigin + "/?connect=error&reason=" + urlEnc(err));
+                return;
+            }
+            if (code == null || state == null) {
+                redirectBrowser(ex, publicOrigin + "/?connect=error&reason=missing_params");
+                return;
+            }
+            PendingOAuth p = oauthPending.remove(state);
+            if (p == null || System.currentTimeMillis() > p.expiresAt) {
+                redirectBrowser(ex, publicOrigin + "/?connect=error&reason=bad_state");
+                return;
+            }
+            String redir = publicOrigin + "/callback/" + p.provider;
+            switch (p.provider) {
+                case "spotify" -> {
+                    String cid = env("SPOTIFY_CLIENT_ID");
+                    if (cid == null) {
+                        throw new IllegalStateException("SPOTIFY_CLIENT_ID not set");
+                    }
+                    streaming.spotifyFinishCode(cid, code, redir, p.verifier);
+                }
+                case "youtube" -> {
+                    String cid = env("GOOGLE_CLIENT_ID");
+                    String sec = env("GOOGLE_CLIENT_SECRET");
+                    if (cid == null || sec == null) {
+                        throw new IllegalStateException("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set");
+                    }
+                    streaming.youtubeFinishCode(cid, sec, code, redir);
+                }
+                case "soundcloud" -> {
+                    String cid = env("SOUNDCLOUD_CLIENT_ID");
+                    String sec = env("SOUNDCLOUD_CLIENT_SECRET");
+                    if (cid == null || sec == null) {
+                        throw new IllegalStateException("SOUNDCLOUD_CLIENT_ID / SOUNDCLOUD_CLIENT_SECRET not set");
+                    }
+                    streaming.soundcloudFinishCode(cid, sec, code, redir, p.verifier);
+                }
+                default -> throw new IllegalStateException("unknown provider");
+            }
+            redirectBrowser(ex, publicOrigin + "/?connect=ok&provider=" + urlEnc(p.provider));
+        } catch (Exception e) {
+            String m = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            redirectBrowser(ex, publicOrigin + "/?connect=error&reason=" + urlEnc(m));
+        }
+    }
+
+    private static String urlEnc(String s) {
+        return java.net.URLEncoder.encode(s, StandardCharsets.UTF_8).replace("+", "%20");
+    }
+
+    private static Map<String, String> parseQuery(String raw) {
+        Map<String, String> m = new LinkedHashMap<>();
+        if (raw == null || raw.isEmpty()) {
+            return m;
+        }
+        for (String part : raw.split("&")) {
+            int i = part.indexOf('=');
+            if (i > 0) {
+                String k = java.net.URLDecoder.decode(part.substring(0, i), StandardCharsets.UTF_8);
+                String v = java.net.URLDecoder.decode(part.substring(i + 1), StandardCharsets.UTF_8);
+                m.put(k, v);
+            }
+        }
+        return m;
+    }
+
+    private static void redirectBrowser(HttpExchange ex, String to) throws IOException {
+        ex.getResponseHeaders().set("Location", to);
+        ex.sendResponseHeaders(302, -1);
+        ex.close();
     }
 
     private void handleApi(HttpExchange ex) throws IOException {
@@ -76,6 +178,9 @@ public final class WebApiServer {
             sendJson(ex, 404, Map.of("error", "not found"));
         } catch (IllegalArgumentException e) {
             sendJson(ex, 400, Map.of("error", e.getMessage()));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            sendJson(ex, 503, Map.of("error", "interrupted"));
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             sendJson(ex, 400, Map.of("error", msg));
@@ -89,9 +194,138 @@ public final class WebApiServer {
     private static final Pattern P_REV = Pattern.compile("^/api/playlist/(\\d+)/reverse$");
     private static final Pattern P_SHUF = Pattern.compile("^/api/playlist/(\\d+)/shuffle$");
 
-    private boolean dispatchApi(HttpExchange ex, String method, String path) throws IOException {
+    private boolean dispatchApi(HttpExchange ex, String method, String path) throws IOException, InterruptedException {
         if ("/api/health".equals(path) && "GET".equals(method)) {
             sendJson(ex, 200, Map.of("ok", true));
+            return true;
+        }
+        if ("/api/integrations/status".equals(path) && "GET".equals(method)) {
+            sendJson(ex, 200, streaming.status());
+            return true;
+        }
+        if ("/api/integrations/spotify/begin".equals(path) && "GET".equals(method)) {
+            String cid = env("SPOTIFY_CLIENT_ID");
+            if (cid == null) {
+                sendJson(ex, 400, Map.of("error", "Set SPOTIFY_CLIENT_ID and register redirect " + publicOrigin + "/callback/spotify"));
+                return true;
+            }
+            String state = StreamingIntegrations.randomUrlSafe(16);
+            String verifier = StreamingIntegrations.randomUrlSafe(48);
+            String challenge = StreamingIntegrations.pkceChallengeS256(verifier);
+            oauthPending.put(state, new PendingOAuth("spotify", verifier, System.currentTimeMillis() + OAUTH_TTL_MS));
+            String url = streaming.spotifyAuthorizeUrl(cid, publicOrigin + "/callback/spotify", state, challenge);
+            sendJson(ex, 200, Map.of("url", url));
+            return true;
+        }
+        if ("/api/integrations/youtube/begin".equals(path) && "GET".equals(method)) {
+            String cid = env("GOOGLE_CLIENT_ID");
+            if (cid == null) {
+                sendJson(ex, 400, Map.of("error", "Set GOOGLE_CLIENT_ID (YouTube Data API OAuth client)"));
+                return true;
+            }
+            String state = StreamingIntegrations.randomUrlSafe(16);
+            oauthPending.put(state, new PendingOAuth("youtube", null, System.currentTimeMillis() + OAUTH_TTL_MS));
+            String url = streaming.youtubeAuthorizeUrl(cid, publicOrigin + "/callback/youtube", state);
+            sendJson(ex, 200, Map.of("url", url));
+            return true;
+        }
+        if ("/api/integrations/soundcloud/begin".equals(path) && "GET".equals(method)) {
+            String cid = env("SOUNDCLOUD_CLIENT_ID");
+            if (cid == null) {
+                sendJson(ex, 400, Map.of("error", "Set SOUNDCLOUD_CLIENT_ID"));
+                return true;
+            }
+            String state = StreamingIntegrations.randomUrlSafe(16);
+            String verifier = StreamingIntegrations.randomUrlSafe(48);
+            String challenge = StreamingIntegrations.pkceChallengeS256(verifier);
+            oauthPending.put(state, new PendingOAuth("soundcloud", verifier, System.currentTimeMillis() + OAUTH_TTL_MS));
+            String url = streaming.soundcloudAuthorizeUrl(cid, publicOrigin + "/callback/soundcloud", state, challenge);
+            sendJson(ex, 200, Map.of("url", url));
+            return true;
+        }
+        if ("/api/integrations/spotify/disconnect".equals(path) && "POST".equals(method)) {
+            streaming.disconnect("spotify");
+            sendJson(ex, 200, Map.of("ok", true));
+            return true;
+        }
+        if ("/api/integrations/youtube/disconnect".equals(path) && "POST".equals(method)) {
+            streaming.disconnect("youtube");
+            sendJson(ex, 200, Map.of("ok", true));
+            return true;
+        }
+        if ("/api/integrations/soundcloud/disconnect".equals(path) && "POST".equals(method)) {
+            streaming.disconnect("soundcloud");
+            sendJson(ex, 200, Map.of("ok", true));
+            return true;
+        }
+        if ("/api/integrations/spotify/playlists".equals(path) && "GET".equals(method)) {
+            String cid = env("SPOTIFY_CLIENT_ID");
+            if (cid == null) {
+                sendJson(ex, 400, Map.of("error", "SPOTIFY_CLIENT_ID not set"));
+                return true;
+            }
+            sendJson(ex, 200, Map.of("playlists", streaming.spotifyListPlaylists(cid)));
+            return true;
+        }
+        if ("/api/integrations/youtube/playlists".equals(path) && "GET".equals(method)) {
+            String cid = env("GOOGLE_CLIENT_ID");
+            String sec = env("GOOGLE_CLIENT_SECRET");
+            if (cid == null || sec == null) {
+                sendJson(ex, 400, Map.of("error", "Google OAuth env not set"));
+                return true;
+            }
+            sendJson(ex, 200, Map.of("playlists", streaming.youtubeListPlaylists(cid, sec)));
+            return true;
+        }
+        if ("/api/integrations/soundcloud/playlists".equals(path) && "GET".equals(method)) {
+            sendJson(ex, 200, Map.of("playlists", streaming.soundcloudPlaylists()));
+            return true;
+        }
+        if ("/api/integrations/spotify/import".equals(path) && "POST".equals(method)) {
+            JsonObject o = JsonParser.parseString(readBody(ex)).getAsJsonObject();
+            String pid = o.get("playlistId").getAsString();
+            int index = o.get("index").getAsInt();
+            String cid = env("SPOTIFY_CLIENT_ID");
+            if (cid == null) {
+                sendJson(ex, 400, Map.of("error", "SPOTIFY_CLIENT_ID not set"));
+                return true;
+            }
+            String csv = streaming.spotifyPlaylistToCsv(cid, pid);
+            Path dest = writeImportCsv("spotify", csv);
+            synchronized (library) {
+                library.addPlaylist(dest.toString(), index);
+                sendJson(ex, 200, Map.of("ok", true, "savedAs", dest.getFileName().toString(), "playlists", buildLibraryPayload()));
+            }
+            return true;
+        }
+        if ("/api/integrations/youtube/import".equals(path) && "POST".equals(method)) {
+            JsonObject o = JsonParser.parseString(readBody(ex)).getAsJsonObject();
+            String pid = o.get("playlistId").getAsString();
+            int index = o.get("index").getAsInt();
+            String cid = env("GOOGLE_CLIENT_ID");
+            String sec = env("GOOGLE_CLIENT_SECRET");
+            if (cid == null || sec == null) {
+                sendJson(ex, 400, Map.of("error", "Google OAuth env not set"));
+                return true;
+            }
+            String csv = streaming.youtubePlaylistToCsv(cid, sec, pid);
+            Path dest = writeImportCsv("youtube", csv);
+            synchronized (library) {
+                library.addPlaylist(dest.toString(), index);
+                sendJson(ex, 200, Map.of("ok", true, "savedAs", dest.getFileName().toString(), "playlists", buildLibraryPayload()));
+            }
+            return true;
+        }
+        if ("/api/integrations/soundcloud/import".equals(path) && "POST".equals(method)) {
+            JsonObject o = JsonParser.parseString(readBody(ex)).getAsJsonObject();
+            String pid = o.get("playlistId").getAsString();
+            int index = o.get("index").getAsInt();
+            String csv = streaming.soundcloudPlaylistToCsv(pid);
+            Path dest = writeImportCsv("soundcloud", csv);
+            synchronized (library) {
+                library.addPlaylist(dest.toString(), index);
+                sendJson(ex, 200, Map.of("ok", true, "savedAs", dest.getFileName().toString(), "playlists", buildLibraryPayload()));
+            }
             return true;
         }
         if ("/api/library".equals(path) && "GET".equals(method)) {
@@ -237,6 +471,10 @@ public final class WebApiServer {
         byte[] bytes = Files.readAllBytes(file);
         String ct = guessContentType(file.toString());
         ex.getResponseHeaders().set("Content-Type", ct);
+        String fn = file.toString();
+        if (fn.endsWith(".css") || fn.endsWith(".js")) {
+            ex.getResponseHeaders().set("Cache-Control", "public, max-age=3600");
+        }
         ex.sendResponseHeaders(200, bytes.length);
         if ("GET".equalsIgnoreCase(ex.getRequestMethod())) {
             try (OutputStream os = ex.getResponseBody()) {
@@ -281,6 +519,14 @@ public final class WebApiServer {
         }
     }
 
+    private Path writeImportCsv(String prefix, String csv) throws IOException {
+        Path uploads = dataRoot.resolve("web/uploads");
+        Files.createDirectories(uploads);
+        Path dest = uploads.resolve("import_" + prefix + "_" + System.currentTimeMillis() + ".csv");
+        Files.writeString(dest, csv, StandardCharsets.UTF_8);
+        return dest;
+    }
+
     private Path resolveDataFile(String filename) {
         if (filename == null || filename.isBlank()) {
             throw new IllegalArgumentException("filename required");
@@ -290,6 +536,18 @@ public final class WebApiServer {
             throw new IllegalArgumentException("invalid path");
         }
         return p;
+    }
+
+    private static final class PendingOAuth {
+        final String provider;
+        final String verifier;
+        final long expiresAt;
+
+        PendingOAuth(String provider, String verifier, long expiresAt) {
+            this.provider = provider;
+            this.verifier = verifier;
+            this.expiresAt = expiresAt;
+        }
     }
 
     private List<Map<String, Object>> buildLibraryPayload() {
