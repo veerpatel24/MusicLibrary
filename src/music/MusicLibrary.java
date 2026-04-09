@@ -155,8 +155,37 @@ public class MusicLibrary {
      * false otherwise. 
      */
     public boolean addSong(int playlistIndex, int position, Song newSong) {
-        return false;
-
+        // write code here
+        Playlist playlist = allPlaylists.get(playlistIndex);
+        int size = playlist.getSize();
+        if(position<1 || position>size+1){
+            return false;
+        }
+        LLNode<Song> newNode = new LLNode<>(newSong);
+        if (size==0){
+            newNode.setNext(newNode);
+            playlist.setLast(newNode);
+        }
+        else if(position==1){
+            newNode.setNext(playlist.getLast().getNext());
+            playlist.getLast().setNext(newNode);
+        }
+        else if (position==size+1){
+            newNode.setNext(playlist.getLast().getNext());
+            playlist.getLast().setNext(newNode);
+            playlist.setLast(newNode);
+        }
+        else{
+            LLNode<Song> previous = playlist.getLast().getNext();
+            for(int i=1; i<position-1; i++){
+                previous=previous.getNext();
+            }
+            newNode.setNext(previous.getNext());
+            previous.setNext(newNode);
+        }
+        playlist.setSize(size+1);
+        return true;
+    
     }
 
     /**
