@@ -4,6 +4,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 if [[ -f .env ]]; then
+  # Strip Windows CRLF so `source` never sees stray \r (fixes "command not found")
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    sed -i '' $'s/\r$//' .env 2>/dev/null || true
+  else
+    sed -i $'s/\r$//' .env 2>/dev/null || true
+  fi
   set -a
   # shellcheck disable=SC1091
   source .env
