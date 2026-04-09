@@ -17,7 +17,7 @@ chmod +x scripts/run-web.sh
 3. Open [http://localhost:7070/](http://localhost:7070/) (or set `PORT=8080 ./scripts/run-web.sh`).
 
 - **Library** — add/remove playlists (CSV files or paste), edit songs, combine, reverse, shuffle (seed **2026**).
-- **Streaming** — connect an account, list playlists, **import** one into the local library at a chosen index. Imports become normal playlists you can edit like any CSV-backed list.
+- **Streaming** — connect an account, list playlists, **import** one into the local library at a chosen index. Imports become normal playlists you can edit here. **Pushing** edits back to Spotify/YouTube/SoundCloud is not implemented (import-only).
 
 Shortcut URL: [http://localhost:7070/Main-V3.html](http://localhost:7070/Main-V3.html) redirects to `/`.
 
