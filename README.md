@@ -35,23 +35,47 @@ git checkout Main-V3
 
 ### 2. (Optional) OAuth / streaming import
 
-If you only want CSV + local editing, **skip this**. The UI works without `.env`.
+If you only want CSV + local editing, **skip to step 3**. The UI works without `.env`.
 
-To use **Spotify / YouTube / SoundCloud** import:
+To use **Spotify** or **YouTube** import, create developer credentials first, then wire them into `.env`.
 
-1. Copy the template and edit it (never commit `.env`; it is gitignored):
+#### How to get a **Spotify** client ID
+
+1. Open the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) and sign in.
+2. Click **Create app**. Give it a name and description; accept the terms.
+3. Click **Edit settings** (or set this when creating). Under **Redirect URIs**, add **both** (adjust the port if you use something other than `7070`):
+   - `http://localhost:7070/callback/spotify`
+   - `http://127.0.0.1:7070/callback/spotify`
+4. Save settings. On the app’s overview page, copy **Client ID**.
+5. Put it in `.env` as `SPOTIFY_CLIENT_ID=your_client_id_here`.
+
+This app uses **OAuth with PKCE** for Spotify, so you do **not** need a Spotify client secret for local use.
+
+#### How to get a **YouTube** (Google) client ID and client secret
+
+YouTube playlist import uses the **YouTube Data API v3** with a **Google OAuth** “Web application” client.
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/) and select or **create a project**.
+2. Go to **APIs & Services** → **Library**, search for **YouTube Data API v3**, and click **Enable**.
+3. Go to **APIs & Services** → **OAuth consent screen**. Choose **External** (unless you use a Google Workspace org flow), fill the required fields, and add yourself as a **Test user** if the app stays in testing mode.
+4. Go to **APIs & Services** → **Credentials** → **Create credentials** → **OAuth client ID**.
+5. Application type: **Web application**. Under **Authorized redirect URIs**, add **both**:
+   - `http://localhost:7070/callback/youtube`
+   - `http://127.0.0.1:7070/callback/youtube`
+   (Use the same port you pass to `PORT=...` when starting the server.)
+6. After you create the client, copy **Client ID** → `GOOGLE_CLIENT_ID` in `.env`, and **Client secret** → `GOOGLE_CLIENT_SECRET`. **Never commit** `.env` or paste the secret in public places.
+
+#### Finish setup in this repo
+
+1. Copy the template (never commit `.env`; it is gitignored):
 
    ```bash
    cp env.example .env
    ```
 
-2. Fill in the variables you need (see comments in `env.example`). **YouTube** needs both `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+2. Edit `.env` and set `SPOTIFY_CLIENT_ID`, and/or `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET`, using the values from the steps above. For **SoundCloud**, see `env.example`.
 
-3. In each provider’s developer console, register **redirect URIs** that match how you open the app, for example:
-
-   - `http://localhost:7070/callback/spotify` and `http://127.0.0.1:7070/callback/spotify` (and the same pattern for `/callback/youtube` and `/callback/soundcloud`).
-
-   Register **both** `localhost` and `127.0.0.1` if you might use either in the browser.
+3. The **redirect URIs** you entered in Spotify and Google must **exactly** match how you open the app (`localhost` vs `127.0.0.1` and port). If something still fails, register **both** host variants in each dashboard, as shown above.
 
 ### 3. Start the server
 
