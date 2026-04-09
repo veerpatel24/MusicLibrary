@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Music Library</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div>
+        <h1>Music Library</h1>
+        <p class="subtitle">Same operations as the terminal <code>Driver</code> — add playlists, edit songs, merge, shuffle, and more.</p>
+      </div>
+      <button type="button" class="btn primary" id="btn-refresh">Refresh library</button>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar" aria-label="Actions">
+        <h2>Actions</h2>
+        <nav class="nav-actions">
+          <button type="button" class="nav-btn" data-scroll="panel-add">Add playlist</button>
+          <button type="button" class="nav-btn" data-scroll="panel-remove">Remove playlist</button>
+          <button type="button" class="nav-btn" data-scroll="panel-load-all">Load all playlists</button>
+          <button type="button" class="nav-btn" data-scroll="panel-add-song">Add song</button>
+          <button type="button" class="nav-btn" data-scroll="panel-find">Find song</button>
+          <button type="button" class="nav-btn" data-scroll="panel-delete-song">Delete song</button>
+          <button type="button" class="nav-btn" data-scroll="panel-reverse">Reverse playlist</button>
+          <button type="button" class="nav-btn" data-scroll="panel-combine">Combine playlists</button>
+          <button type="button" class="nav-btn" data-scroll="panel-shuffle">Shuffle playlist</button>
+        </nav>
+      </aside>
+
+      <main class="main">
+        <section class="library" aria-live="polite">
+          <h2>Library</h2>
+          <div id="library-root" class="library-grid"></div>
+        </section>
+
+        <section class="panels">
+          <article class="panel" id="panel-add">
+            <h3>Add playlist (CSV path)</h3>
+            <p class="hint">Path is relative to the server project root (e.g. <code>2010.csv</code>). Or paste CSV below.</p>
+            <label>Filename <input type="text" id="add-filename" placeholder="2010.csv" /></label>
+            <label>Index <input type="number" id="add-index" value="0" /></label>
+            <button type="button" class="btn primary" id="btn-add-playlist">Add playlist</button>
+            <hr />
+            <h4>Paste CSV</h4>
+            <textarea id="add-csv" rows="5" placeholder="Song,Artist,Year,Popularity,Link"></textarea>
+            <label>Index <input type="number" id="add-csv-index" value="0" /></label>
+            <button type="button" class="btn" id="btn-add-csv">Add from pasted CSV</button>
+          </article>
+
+          <article class="panel" id="panel-remove">
+            <h3>Remove playlist</h3>
+            <label>Index <input type="number" id="remove-index" value="0" /></label>
+            <button type="button" class="btn danger" id="btn-remove">Remove</button>
+          </article>
+
+          <article class="panel" id="panel-load-all">
+            <h3>Load all playlists</h3>
+            <p class="hint">One filename per line (replaces library).</p>
+            <textarea id="load-all-files" rows="6" placeholder="2010.csv&#10;2011.csv"></textarea>
+            <button type="button" class="btn primary" id="btn-load-all">Load all</button>
+          </article>
+
+          <article class="panel" id="panel-add-song">
+            <h3>Add song</h3>
+            <label>Playlist index <input type="number" id="song-add-pi" value="0" /></label>
+            <label>Position (1-based) <input type="number" id="song-add-pos" value="1" /></label>
+            <label>Name <input type="text" id="song-add-name" /></label>
+            <label>Artist <input type="text" id="song-add-artist" /></label>
+            <label>Year <input type="number" id="song-add-year" /></label>
+            <label>Popularity (0–99) <input type="number" id="song-add-pop" /></label>
+            <label>Link file (optional) <input type="text" id="song-add-link" placeholder="track.wav" /></label>
+            <button type="button" class="btn primary" id="btn-add-song">Insert song</button>
+          </article>
+
+          <article class="panel" id="panel-find">
+            <h3>Find song</h3>
+            <label>Playlist index <input type="number" id="find-pi" value="0" /></label>
+            <label>Song name <input type="text" id="find-name" /></label>
+            <button type="button" class="btn" id="btn-find">Find</button>
+            <pre id="find-result" class="result"></pre>
+          </article>
+
+          <article class="panel" id="panel-delete-song">
+            <h3>Delete song</h3>
+            <label>Playlist index <input type="number" id="del-pi" value="0" /></label>
+            <label>Name <input type="text" id="del-name" /></label>
+            <label>Artist <input type="text" id="del-artist" /></label>
+            <label>Year <input type="number" id="del-year" /></label>
+            <label>Popularity <input type="number" id="del-pop" /></label>
+            <button type="button" class="btn danger" id="btn-delete-song">Delete</button>
+          </article>
+
+          <article class="panel" id="panel-reverse">
+            <h3>Reverse playlist</h3>
+            <label>Index <input type="number" id="rev-index" value="0" /></label>
+            <button type="button" class="btn" id="btn-reverse">Reverse</button>
+          </article>
+
+          <article class="panel" id="panel-combine">
+            <h3>Combine playlists</h3>
+            <label>First index <input type="number" id="comb-a" value="0" /></label>
+            <label>Second index <input type="number" id="comb-b" value="1" /></label>
+            <button type="button" class="btn primary" id="btn-combine">Combine</button>
+          </article>
+
+          <article class="panel" id="panel-shuffle">
+            <h3>Shuffle playlist</h3>
+            <p class="hint">Uses seed <strong>2026</strong> (same as <code>Driver</code>).</p>
+            <label>Index <input type="number" id="shuf-index" value="0" /></label>
+            <button type="button" class="btn" id="btn-shuffle">Shuffle</button>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
