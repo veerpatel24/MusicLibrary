@@ -265,7 +265,24 @@ public class MusicLibrary {
      * @param playlistIndex the playlist to reverse
      */
     public void reversePlaylist(int playlistIndex) {
-
+        // write code here
+        Playlist playlist = allPlaylists.get(playlistIndex);
+        LLNode<Song> end = playlist.getLast();
+        if(end==null||playlist.getSize()==1){
+            return;
+        }
+        LLNode<Song> front = end.getNext();
+        LLNode<Song> previous = end;
+        LLNode<Song> playing = front;
+        LLNode<Song> next;
+        do {
+            next = playing.getNext();
+            playing.setNext(previous);
+            previous = playing;
+            playing = next;
+        } while(playing!=front);
+        playlist.setLast(front);
+    
     }
 
     /**
