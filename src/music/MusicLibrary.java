@@ -195,8 +195,21 @@ public class MusicLibrary {
      * @return Song object of song if found, otherwise null
      */
     public Song findSong(int playlistIndex, String songName){
+        // write code here
+        Playlist playlist = allPlaylists.get(playlistIndex);
+        LLNode<Song> end = playlist.getLast();
+        if(end==null){
+            return null;
+        }
+        LLNode<Song> playing=end.getNext();
+        do {
+            if(playing.getData().getSongName().equals(songName)){
+                return playing.getData();
+            }
+            playing = playing.getNext();
+        } while(playing!=end.getNext());
         return null;
-
+    
     }
 
     /**
@@ -211,8 +224,36 @@ public class MusicLibrary {
      * been removed, false otherwise.
      */
     public boolean deleteSong(int playlistIndex, Song song) {
+        // write code here
+        Playlist playlist = allPlaylists.get(playlistIndex);
+        LLNode<Song> end = playlist.getLast();
+        if(end==null){
+            return false;
+        }
+        if(playlist.getSize()==1){
+            if(end.getData().equals(song)){
+                playlist.setLast(null);
+                playlist.setSize(0);
+                return true;
+            }
+            else{return false;}
+        }
+        LLNode<Song> previous = end;
+        LLNode<Song> playing = end.getNext();
+        do {
+            if(playing.getData().equals(song)){
+                previous.setNext(playing.getNext());
+                if(playing==end){
+                    playlist.setLast(previous);
+                }
+                playlist.setSize(playlist.getSize()-1);
+                return true;
+            }
+            previous = playing;
+            playing = playing.getNext();
+        } while(playing!=end.getNext());
         return false;
-
+    
     }
 
     /**
